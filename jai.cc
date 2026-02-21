@@ -2,6 +2,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <print>
 #include <utility>
 
 #include <dirent.h>
@@ -112,6 +113,62 @@ template<typename E = std::runtime_error, typename... Args>
 err(std::format_string<Args...> fmt, Args &&...args)
 {
   throw E(std::vformat(fmt.get(), std::make_format_args(args...)));
+}
+
+// Conservatively fails if file cannot be statted for any reason.
+bool
+is_fd_at_path(int targetfd, int dfd, path file, bool follow = false)
+{
+  struct stat sbfd, sbpath;
+  if (fstat(targetfd, &sbfd))
+    syserr("fstat");
+  if (fstatat(dfd, file.c_str(), &sbpath, follow ? 0 : AT_SYMLINK_NOFOLLOW))
+    return false;
+  return sbfd.st_dev == sbpath.st_dev && sbfd.st_ino == sbpath.st_ino;
+}
+
+// Open an exclusive lockfile to guard one-time setup.  Might fail, in
+// which case re-check the need for setup and try again.
+Fd
+openlock(int dfd, path file)
+{
+  assert(!file.empty());
+
+  Fd fd(openat(dfd, file.c_str(), O_RDWR | O_CLOEXEC | O_NOFOLLOW));
+  if (fd) {
+    if (!flock(*fd, LOCK_EX | LOCK_NB)) {
+      if (!is_fd_at_path(*fd, dfd, file))
+        // Someone may have unlinked after completing setup; fail and
+        // expect the invoker to call again if setup isn't complete.
+        fd.reset();
+      return fd;
+    }
+    if (errno != EWOULDBLOCK && errno != EINTR)
+      syserr(R"(flock("{}", LOCK_EX|LOCK_NB))", file.string());
+    // We failed, but delay returning until lock is released, at which
+    // point setup will likely be complete.
+    if (flock(*fd, LOCK_SH) && errno != EINTR)
+      syserr(R"(flock("{}", LOCK_SH))", file.string());
+    fd.reset();
+    return fd;
+  }
+  if (errno != ENOENT)
+    syserr(R"(open("{}"))", file.string());
+
+  path parent = file.parent_path();
+  const char *pp = parent.empty() ? "." : parent.c_str();
+  fd.reset(openat(dfd, pp, O_RDWR | O_TMPFILE | O_CLOEXEC, 0600));
+  if (!fd)
+    syserr(R"(openat("{}", O_RDWR|O_TMPFILE))", pp);
+  if (flock(*fd, LOCK_EX | LOCK_NB))
+    // It's a temp file so should be impossible for anyone else to lock it
+    syserr("flock(O_TMPFILE)");
+  if (linkat(*fd, "", dfd, file.c_str(), AT_EMPTY_PATH)) {
+    if (errno != EEXIST)
+      syserr(R"(linkat("{}"))", file.string());
+    fd.reset();
+  }
+  return fd;
 }
 
 template<std::integral I>
@@ -361,7 +418,16 @@ main(int argc, char **argv)
   if (argc > 0)
     prog = argv[0];
 
+  path p{};
+  std::println("parent {}, filename {}\n", p.parent_path().string(),
+               p.filename().string());
+  p = "x";
+  std::println("parent {}, filename {}\n", p.parent_path().string(),
+               p.filename().string());
+
+  /*
   Config conf;
   conf.init();
   conf.makens();
+  */
 }
