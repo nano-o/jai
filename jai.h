@@ -111,14 +111,15 @@ using PathSet = std::multiset<path, PathLess>;
 inline auto
 subtree(const PathSet &s, const path &root)
 {
+  if (root.relative_path().empty())
+    return std::ranges::subrange(s.begin(), s.end());
+  path end = root;
+  if (end.filename().empty())
+    end = end.parent_path();
   // First possible pathname not under root is the (illegal) pathname
   // in which root's final component has a '\0' byte appended.
-  auto end = root.string();
-  if (!end.empty() && end.back() == '/')
-    end.back() = '\0';
-  else
-    end += '\0';
-  return std::ranges::subrange(s.lower_bound(root), s.lower_bound(path(end)));
+  end += '\0';
+  return std::ranges::subrange(s.lower_bound(root), s.lower_bound(end));
 }
 
 // Return a subtree in reverse order (suitable for unmounting).
