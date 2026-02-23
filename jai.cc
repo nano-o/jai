@@ -1,8 +1,8 @@
+#include "jai.h"
+
 #include <cassert>
 #include <cstring>
-#include <filesystem>
 #include <print>
-#include <utility>
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -17,9 +17,6 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#include "jai.h"
-
-using std::filesystem::path;
 
 path prog;
 
@@ -45,22 +42,6 @@ struct Config {
   int homejai();
   int runjai();
 };
-
-template<typename... Args>
-[[noreturn]] void
-syserr(std::format_string<Args...> fmt, Args &&...args)
-{
-  throw std::system_error(
-      errno, std::system_category(),
-      std::vformat(fmt.get(), std::make_format_args(args...)));
-}
-
-template<typename E = std::runtime_error, typename... Args>
-[[noreturn]] void
-err(std::format_string<Args...> fmt, Args &&...args)
-{
-  throw E(std::vformat(fmt.get(), std::make_format_args(args...)));
-}
 
 // Conservatively fails if file is not a regular file or cannot be
 // statted for any reason.
