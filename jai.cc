@@ -4,11 +4,13 @@
 #include <cstring>
 #include <print>
 
+#include <acl/libacl.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
 #include <sched.h>
+#include <sys/acl.h>
 #include <sys/file.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
@@ -42,12 +44,7 @@ struct Config {
   [[nodiscard]] Defer asuser();
   int homejai();
   int runjai();
-  int runhome()
-  {
-    if (!run_home_fd_)
-      run_home_fd_ = ensure_dir(runjai(), user_, 0755, kNoFollow);
-    return *run_home_fd_;
-  }
+  int runhome();
 };
 
 void
@@ -276,6 +273,33 @@ Config::runjai()
   return *run_jai_fd_;
 }
 
+int
+Config::runhome()
+{
+  if (run_home_fd_)
+    return *run_home_fd_;
+
+  run_home_fd_ = ensure_dir(runjai(), user_, 0700, kNoFollow);
+
+  RaiiHelper<acl_free, acl_t> acl = acl_get_fd(*run_home_fd_);
+  if (!acl)
+    syserr("acl_get_fd");
+  if (int r = acl_equiv_mode(acl, nullptr); r < 0)
+    syserr("acl_equiv_mode");
+  else if (r == 0) {
+    auto text = std::format("u::rwx,g::---,o::---,u:{}:r-x,m::r-x", uid_);
+    acl = acl_from_text(text.c_str());
+    if (!acl)
+      syserr(R"(acl_from_text("{}"))", text);
+    if (acl_valid(acl) != 0)
+      syserr(R"(acl_valid("{}"))", text);
+    if (acl_set_fd(*run_home_fd_, acl))
+      syserr("acl_set_fd");
+  }
+
+  return *run_home_fd_;
+}
+
 std::vector default_blacklist = {
     ".jai",
     ".ssh",
@@ -346,12 +370,12 @@ Config::make_overlay()
   restore.reset();
 
   Fd mnt = overlay_mount(*homefd_, *changes, *work);
-  Fd olhome = ensure_dir(runjai(), "sandboxed-home", 0755, kFollow);
+  Fd olhome = ensure_dir(runhome(), "sandboxed-home", 0755, kFollow);
   if (move_mount(*mnt, "", *olhome, "",
                  MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH))
     syserr("move_mount");
 
-  return xopenat(runjai(), "sandboxed-home",
+  return xopenat(runhome(), "sandboxed-home",
                  O_RDONLY | O_CLOEXEC | O_DIRECTORY);
 }
 

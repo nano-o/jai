@@ -1,4 +1,6 @@
 #include <cassert>
+#include <cstring>
+#include <print>
 
 #include <dirent.h>
 #include <libmount.h>
@@ -27,6 +29,20 @@ mountpoints(path mountinfo)
     if (const char *target = mnt_fs_get_target(mp))
       res.emplace(target);
   return res;
+}
+
+void
+recursive_umount(path tree)
+{
+  auto dirs = subtree_rev(mountpoints(), root);
+  for (const auto &dir : dirs) {
+    if (umount2(dir.c_str(), UMOUNT_NOFOLLOW)) {
+      std::println(stderr, R"(umount("{}"): {})", dir.string(),
+                   strerror(errno));
+      if (umount2(dir.c_str(), UMOUNT_NOFOLLOW|MNT_DETACH) == 0)
+        std::println(stderr, "did lazy unmount of {}\n", dir.string());
+    }
+  }
 }
 
 bool

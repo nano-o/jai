@@ -69,8 +69,15 @@ struct RaiiHelper {
   }
 
   explicit operator bool() const noexcept { return t_ != Empty; }
-  const T &operator*() const noexcept { return t_; }
+  decltype(auto) operator*(this auto &&self) noexcept { return (self.t_); }
+  auto addr(this auto &&self) noexcept { return std::addressof(self); }
 
+  // For legacy libraries that want a T**, return that type for &
+  template<std::same_as<T> U = T> requires std::is_pointer_v<U>
+  auto operator&(this auto &&self) noexcept
+  {
+    return &self.t_;
+  }
   // Make it easier to use RaiiHelper with pointers in C libraries
   template<std::same_as<T> U = T> requires std::is_pointer_v<U>
   operator U() const
@@ -142,6 +149,8 @@ subtree_rev(const PathSet &s, const path &root)
 }
 
 PathSet mountpoints(path mountinfo = "/proc/self/mountinfo");
+
+void recursive_umount(path tree);
 
 enum class FollowLinks {
   kNoFollow = 0,
