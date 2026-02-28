@@ -36,13 +36,6 @@ struct Config {
   Fd run_jai_user_fd_;
 
   void init();
-  void reset()
-  {
-    home_fd_.reset();
-    home_jai_fd_.reset();
-    run_jai_fd_.reset();
-    run_jai_user_fd_.reset();
-  }
 
   Fd make_ns();
   int make_ns_child();
@@ -349,31 +342,26 @@ Config::make_ns()
       stack->data() + stack->size(), CLONE_NEWNS | SIGCHLD, &child_state);
 
   pipefds[0].reset();
-  Fd ns = xopenat(run_jai_user(), "ns", O_CREAT | O_RDWR, 0600);
   Fd nsmnt =
       clone_tree(*xopenat(-1, std::format("/proc/{}/ns/mnt", pid), O_RDONLY));
   xmnt_propagate(*nsmnt, MS_PRIVATE);
-  xmnt_move(*nsmnt, *ns);
-
   pipefds[1].reset();
   reap.release();
   int status;
   while (waitpid(pid, &status, 0) && errno == EINTR)
     ;
-  if (status) {
-    // umount2((path{kRunRoot} / user_ / "ns").c_str(), MNT_DETACH);
-    // unlinkat(run_jai_user(), "ns", 0);
+  if (status)
     err("failed to create new namespace");
-  }
+  Fd ns = xopenat(run_jai_user(), "ns", O_CREAT | O_RDWR, 0600);
+  xmnt_move(*nsmnt, *ns);
   return nsmnt;
 }
 
 int
 Config::make_ns_child()
 {
-  reset();
-
   const path mnt = "/mnt";
+  const path mrj = mnt / path{kRunRoot}.relative_path();
   auto oldroot = xopenat(-1, "/", O_PATH);
   xmnt_propagate(*oldroot, MS_PRIVATE, true);
   Fd newroot = clone_tree(*oldroot, {}, true);
@@ -384,22 +372,8 @@ Config::make_ns_child()
                },
                AT_RECURSIVE);
   xmnt_move(*newroot, -1, mnt);
-
-  umount2((mnt / "tmp").c_str(), MNT_DETACH);     // ignore errors
-  umount2((mnt / "var/tmp").c_str(), MNT_DETACH); // ignore errors
-
-  auto tmp = xopenat(run_jai_user(), "tmp", O_DIRECTORY | O_PATH);
-  xmnt_move(*clone_tree(*tmp), -1, (mnt / "tmp").c_str());
-  xmnt_move(*clone_tree(*tmp), -1, (mnt / "var/tmp").c_str());
-
-  Fd newhome =
-      xopenat(-1, mnt / homepath_.relative_path(), O_RDONLY | O_NOFOLLOW);
-  check_user(*newhome);
-  auto sandboxed_home = xopenat(run_jai_user(), kSB, O_RDONLY | O_NOFOLLOW);
-  xmnt_move(*clone_tree(*sandboxed_home), *newhome);
-
-  if (umount2((mnt / path{kRunRoot}.relative_path()).c_str(), MNT_DETACH))
-    syserr(R"(umount2("{}"))", (mnt / kRunRoot).string());
+  umount2(mrj.c_str(), MNT_DETACH);
+  xmnt_move(-1, kRunRoot, -1, mrj.c_str(), 0);
 
   if (chdir(mnt.c_str()))
     syserr(R"(chdir("{}"))", mnt.string());
@@ -409,6 +383,24 @@ Config::make_ns_child()
     syserr("umount2 root after pivot");
   if (chdir("/"))
     syserr(R"(chdir("/"))");
+
+  umount2("/tmp", MNT_DETACH);     // ignore errors
+  umount2("/var/tmp", MNT_DETACH); // ignore errors
+
+  auto tmp = xopenat(run_jai_user(), "tmp", O_DIRECTORY | O_PATH | O_NOFOLLOW);
+  xmnt_move(*clone_tree(*tmp), -1, "/tmp");
+  xmnt_move(*clone_tree(*tmp), -1, "/var/tmp");
+  tmp.reset();
+
+  Fd newhome = xopenat(-1, homepath_.c_str(), O_RDONLY | O_NOFOLLOW);
+  check_user(*newhome);
+  auto sandboxed_home =
+      xopenat(run_jai_user(), kSB, O_RDONLY | O_NOFOLLOW | O_DIRECTORY);
+  xmnt_move(*clone_tree(*sandboxed_home), *newhome);
+
+  if (umount2(kRunRoot, MNT_DETACH))
+    syserr(R"(umount2("{}"))", kRunRoot);
+
   return 0;
 }
 
