@@ -2,6 +2,11 @@
 This software only runs on modern versions of linux.  It makes
 extensive use of non-portable file system namespace facilities.
 
+To get the software, run:
+
+    git clone github.com:stanford-scs/jai.git
+    cd jai
+
 To build the software, run:
 
     make
@@ -9,10 +14,10 @@ To build the software, run:
 To install it, run one of the following:
 
     # To install in the default location of /usr/local/bin
-    make install
+    make && sudo make install
 
     # To override the default location and install in /usr
-    make install PREFIX=/usr
+    make && make install PREFIX=/usr
 
     # To package the files
     fakeroot sh -c 'make install DESTDIR=pkg PREFIX=/usr && \

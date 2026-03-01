@@ -23,3 +23,5 @@ when things go wrong.
 * The rest of the file system is read only.
 
 See the [man page](jai.1.md) for more documentation.
+
+See the [INSTALL](INSTALL) file for installation instructions.
