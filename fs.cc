@@ -87,11 +87,13 @@ clone_tree(int dfd, const path &file, bool recursive)
 }
 
 void
-xmnt_move(int mfd, const path &mfile, int mpfd, const path &mpfile, int flags)
+xmnt_move(int fromfd, const path &fromfile, int tofd, const path &tofile,
+          int flags)
 {
-  if (move_mount(mfd, mfile.c_str(), mpfd, mpfile.c_str(),
+  if (move_mount(fromfd, fromfile.c_str(), tofd, tofile.c_str(),
                  flags | MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH))
-    syserr("move_mount({}, {}/{})", fdpath(mfd), fdpath(mpfd), mpfile.string());
+    syserr("move_mount({}, {}/{})", fdpath(fromfd), fdpath(tofd),
+           tofile.string());
 }
 
 void

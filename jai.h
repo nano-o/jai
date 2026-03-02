@@ -169,13 +169,12 @@ Fd make_mount(int conffd, int attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV);
 
 Fd clone_tree(int dfd, const path &file = {}, bool recursive = false);
 
-void xmnt_move(int mountfd, const path &mountpath, int mountpointfd,
-               const path &mountpointfile, int flags);
-
+void xmnt_move(int fromfd, const path &frompath, int tofd, const path &topath,
+               int flags);
 inline void
-xmnt_move(int mfd, int mpfd, const path &mpfile = {}, int flags = 0)
+xmnt_move(int fromfd, int tofd, const path &topath = {}, int flags = 0)
 {
-  xmnt_move(mfd, path{}, mpfd, mpfile, flags);
+  xmnt_move(fromfd, path{}, tofd, topath, flags);
 }
 
 void xmnt_setattr(int fd, const path &file, const mount_attr &a,
@@ -244,7 +243,7 @@ Fd open_lockfile(int dfd, const path &file);
 //    auto r = lock_or_validate(...);
 //    if (r)
 //      return std::move(*r);
-//    // now you no longer have the lock
+//    // now you continue to hold the lock until r is destroyed
 template<typename Get,
          typename Validate = decltype([](auto &&v) { return bool(v); })>
 std::expected<std::decay_t<std::invoke_result_t<Get>>, Defer>
