@@ -28,10 +28,13 @@ jai.1: jai.1.md
 install: all
 	install -D -o root -m 04511 -t $(DESTDIR)$(PREFIX)/bin jai
 	install -D -t $(DESTDIR)$(PREFIX)/share/man/man1 jai.1
+	install -D -m 0444 -t $(DESTDIR)$(PREFIX)/lib/syusers.d jai.conf
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/jai \
-		$(DESTDIR)$(PREFIX)/share/man/man1/jai.1
+		$(DESTDIR)$(PREFIX)/share/man/man1/jai.1 \
+		$(DESTDIR)$(PREFIX)/lib/sysusers.d
+	@echo If you created user jai, you may want to run \"userdel jai\"
 
 clean:
 	rm -f jai *~ *.o
