@@ -72,6 +72,46 @@ struct Config {
   Fd make_private_tmp();
 };
 
+template<typename Ent, auto IdFn, auto NamFn> struct DbEnt {
+  Ent *p_{};
+  Ent ent_;
+  std::vector<char> buf_;
+
+  DbEnt() noexcept = default;
+  DbEnt(DbEnt &&other) : p_(std::exchange(other.p_, nullptr)), ent_(other, ent_)
+  {
+    swap(buf_, other.buf_);
+  }
+  DbEnt &operator=(DbEnt &&other) noexcept
+  {
+    p_ = std::exchange(other.p_, nullptr);
+    ent_ = other.ent_;
+    swap(buf_, other.buf_);
+    return *this;
+  }
+
+  explicit operator bool() const { return p_; }
+  const Ent *operator->() const { return p_; }
+
+  bool id(uid_t n) { return get(IdFn, n); }
+  bool nam(const char *n) { return get(NamFn, n); }
+
+  bool get(auto fn, auto key)
+  {
+    buf_.resize(std::max(128uz, buf_.capacity()));
+    for (;;) {
+      if (int r = fn(key, &ent_, buf_.data(), buf_.size(), &p_); !r)
+        return p_;
+      else if (r == ERANGE)
+        buf_.resize(2 * buf_.size());
+      else
+        errno = r, syserr("DbEnt<{}>::get", typeid(Ent).name());
+    }
+  }
+};
+using PwEnt = DbEnt<passwd, getpwuid_r, getpwnam_r>;
+using GrEnt = DbEnt<group, getgrgid_r, getgrnam_r>;
+
 static std::expected<Fd, Defer>
 lock_or_validate_file(int dfd, const path &file, int flags, auto &&validate,
                       path lockfile = {}) requires requires {
@@ -96,9 +136,6 @@ lock_or_validate_file(int dfd, const path &file, int flags, auto &&validate,
 void
 Config::init()
 {
-  std::vector<char> buf;
-  struct passwd pwbuf, *pw{};
-
   auto realuid = getuid();
 
   const char *envuser{};
@@ -109,20 +146,13 @@ Config::init()
   else if (const char *u = getenv("USER"))
     envuser = u;
 
-  for (;;) {
-    buf.resize(std::max(128uz, 2 * buf.size()));
-    if (realuid == 0 && envuser) {
-      if (int r = getpwnam_r(envuser, &pwbuf, buf.data(), buf.size(), &pw); pw)
-        break;
-      else if (r != ERANGE)
-        err("cannot find password entry for user {}", envuser);
-    }
-    else if (int r = getpwuid_r(realuid, &pwbuf, buf.data(), buf.size(), &pw);
-             pw)
-      break;
-    else if (r != ERANGE)
-      err("cannot find password entry for uid {}", uid_);
+  PwEnt pw;
+  if (realuid == 0 && envuser) {
+    if (!pw.nam(envuser))
+      err("cannot find password entry for user {}", envuser);
   }
+  else if (!pw.id(realuid))
+    err("cannot find password entry for uid {}", uid_);
 
   user_ = pw->pw_name;
   uid_ = pw->pw_uid;
