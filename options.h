@@ -90,33 +90,61 @@ template<is_action F> struct ActionImpl : Action {
 };
 template<typename F> ActionImpl(F) -> ActionImpl<F>;
 
+struct Option : std::string_view {
+  template<std::size_t N> requires (N >= 3)
+  consteval Option(const char (&str)[N]) : std::string_view(str, N - 1)
+  {
+    if (str[0] != '-' || (N == 3 && str[1] == '-'))
+      throw R"(Option must be of form "-c" or "--string")";
+    if (find('=') != npos)
+      throw "Option name must not contain '='";
+  }
+};
+
 struct Options {
   using enum Action::HasArg;
-  struct Help {
-    std::vector<std::string> opts_;
-    std::string desc_;
-  };
   std::map<std::string, std::shared_ptr<Action>, std::less<>> actions_;
-  std::vector<Help> help_;
+  std::string help_;
 
-  Options &add(std::initializer_list<std::string> options, is_action auto f,
-               std::string help = {})
+  Options &add(std::initializer_list<Option> options, is_action auto f,
+               std::string help = {}, std::string valname = {})
   {
     auto action = std::make_shared<ActionImpl<decltype(f)>>(std::move(f));
+    if (valname.empty())
+      valname = "VAL";
+    std::string optstr;
     for (const auto &opt : options) {
-      if (opt.size() < 2 || opt[0] != '-' ||
-          (opt[1] == '-') != (opt.size() > 2))
-        throw std::logic_error(std::format("invalid option \"{}\"", opt));
-      actions_[opt] = action;
+      actions_[std::string(opt)] = action;
+      if (help.empty())
+        continue;
+      if (!optstr.empty())
+        optstr += ", ";
+      optstr += opt;
+      if (auto ha = action->has_arg(); ha != kNoArg) {
+        if (ha == kOptArg)
+          optstr += '[';
+        else if (opt.size() == 2)
+          optstr += ' ';
+        if (opt.size() > 2)
+          optstr += '=';
+        optstr += valname;
+        if (ha == kOptArg)
+          optstr += ']';
+      }
     }
-    if (!help.empty())
-      help_.emplace_back(options, std::move(help));
+    if (!help.empty()) {
+      if (auto sz = optstr.size(); sz < 13)
+        help_ += std::format("  {}{:<{}}{}\n", optstr, "", 14 - sz, help);
+      else
+        help_ += std::format("  {}\n    {}\n", optstr, help);
+    }
     return *this;
   }
 
-  Options &add(std::string opt1, is_action auto f, std::string help = {})
+  Options &add(Option opt, is_action auto f, std::string help = {},
+               std::string valname = {})
   {
-    return add({opt1}, std::move(f), std::move(help));
+    return add({opt}, std::move(f), std::move(help), std::move(valname));
   }
 
   Action &getopt(std::string_view opt)
