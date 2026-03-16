@@ -391,7 +391,7 @@ try_read_file(int dfd, path file)
   Fd fdholder;
   int fd = dfd;
   if (!file.empty()) {
-    fdholder = openat(fd, file.c_str(), O_RDONLY, O_CLOEXEC);
+    fdholder = openat(fd, file.c_str(), O_RDONLY | O_CLOEXEC);
     if (!fdholder)
       return std::unexpected(
           std::system_error(errno, std::system_category(), fdpath(fd, file)));

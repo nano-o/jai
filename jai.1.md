@@ -8,31 +8,32 @@ jai - Jail an AI agent
 
 # SYNOPSIS
 
-`jai` [`-d` *dir*] [`-h` *name*] [`-D`] *cmd* [*arg* ...] \
-`jai` \
+`jai` [*option*]...  *cmd* [*arg*]... \
+`jai` [`--casual`] [*option*]... \
 `jai` `-u`
 
 # DESCRIPTION
 
 `jai` is a super lightweight sandbox for AI agents requiring almost no
-configuration.  It provides only casual security, so is not a
+configuration.  By default it provides casual security, so is not a
 substitute for using a proper container to confine agents.  However,
-it is a great alternative to using no protection when you are thinking
-of giving an agent full control of your account and all its files.
-Compared to the latter, `jai` can reduce the blast radius should
-things go wrong.
+it is a great alternative to using no protection at all when you are
+thinking of giving an agent full control of your account and all its
+files.  Compared to the latter, `jai` can reduce the blast radius
+should things go wrong.
 
-Before using `jai`, if your home directory is on NFS, make
-`$HOME/.jai` a symbolic link to a directory you own on a local file
-system supporting extended attributes.
+Before using `jai`, if your home directory is on NFS and you want to
+use casual mode, make `$HOME/.jai` a symbolic link to a directory you
+own on a local file system that supports extended attributes.
+Otherwise, you may only be able to use strict mode.
 
 To get started, run `jai` with no arguments.  (If it is not setuid
 root, you will need to run `sudo jai`.)  This will create an overlay
-mount of your home directory in `/run/jai/$USER/sandboxed-home`.
-Change to that directory and delete any sensitive files you don't want
-your agent to have access to.  (Start with deleting a file you don't
-care about, and verify that it only disappears from the sandbox, not
-from your real home directory.)
+mount of your home directory in `/run/jai/$USER/default.home`.  Change
+to that directory and delete any sensitive files you don't want your
+agent to have access to.  (Start with deleting a file you don't care
+about, and verify that it only disappears from the sandbox, not from
+your real home directory.)
 
 Once you are satisfied with the sandbox, go to a project directory you
 own and run `jai $SHELL`.  That will let you explore the sandboxed
@@ -60,12 +61,14 @@ flag.
 
 # OPTIONS
 
-`-d` *dir*
+`-d` *dir*, `--dir=`*dir*
 : Grant full access to directory *dir* and everything below in the
   jail.  You must own the directory.  You can supply this option
   multiple times.
 
-`-D`
+`-C` *file*, `--conf=`*file*
+
+`-D`, `--nocwd`
 : By default, `jai` grants access to the current working directory
   even if it is not specified with `-d`.  This option suppresses that
   behavior.  If you run with `-D` and no `-d` options, your entire

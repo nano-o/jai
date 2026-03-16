@@ -107,14 +107,13 @@ struct Config {
 bool
 Config::parse_config_file(path file, Options *opts)
 {
-  auto ld = homepath_ / file;
-  if (auto [_it, ok] = config_loop_detect_.insert(ld); !ok) {
-    warn("{}: configuration loop", file.string());
-    return false;
-  }
+  bool slash = std::ranges::distance(file.begin(), file.end()) > 1;
+  auto ld = (slash ? cwd() : homepath_ / ".jai") / file;
+  if (auto [_it, ok] = config_loop_detect_.insert(ld); !ok)
+    err<Options::Error>("configuration loop");
   Defer _clear{[this, ld = std::move(ld)] { config_loop_detect_.erase(ld); }};
 
-  auto r = try_read_file(home_jai(), file);
+  auto r = try_read_file(slash ? AT_FDCWD : home_jai(), file);
   if (!r) {
     if (r.error().code() == std::errc::no_such_file_or_directory)
       return false;
@@ -189,7 +188,8 @@ Try running "sudo systemd-sysusers".)",
 
   // Paranoia about ptrace, because we will drop privileges to access
   // the file system as the user.
-  prctl(PR_SET_DUMPABLE, 0);
+  if (prctl(PR_SET_DUMPABLE, 0) == -1)
+    syserr("prctl(PR_SET_DUMPABLE, 0)");
 
   old_umask_ = umask(0);
 }
@@ -361,7 +361,7 @@ Fd
 Config::make_idmap_ns()
 {
   pid_t pid{-1};
-  Defer _reap([pid] {
+  Defer _reap([&pid] {
     if (pid > 0) {
       while (waitpid(pid, nullptr, 0) == -1 && errno == EINTR)
         ;
@@ -627,7 +627,7 @@ Config::exec(int nsfd, char **argv)
 
   if (auto pid = xfork()) {
     close(nsfd);
-    int status;
+    int status = -1;
     while (waitpid(pid, &status, 0) == -1 && errno == EINTR)
       ;
     // unmount();
@@ -794,10 +794,13 @@ default: CMD.conf or default.conf if CMD.conf does not exist)",
     return;
   }
 
-  if (opt_C.empty() && !cmd.empty() && conf.name_ok(cmd[0]))
-    opt_C = std::format("{}.conf", cmd[0]);
-  if ((opt_C.empty() || !conf.parse_config_file(opt_C)) &&
-      !conf.parse_config_file("default.conf")) {
+  if (!opt_C.empty()) {
+    if (!conf.parse_config_file(opt_C))
+      err("{}: no such configuration file", opt_C.string());
+  }
+  else if ((cmd.empty() || !conf.name_ok(cmd[0]) ||
+            !conf.parse_config_file(std::format("{}.conf", cmd[0]))) &&
+           !conf.parse_config_file("default.conf")) {
     conf.make_default_conf();
     conf.parse_config_file("default.conf");
   }
