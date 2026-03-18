@@ -697,7 +697,7 @@ Config::sanitize_env()
     unsetenv(v.c_str());
 }
 
-// Exits if child exited, returns stop signal if it stopped, 0 in EINTR
+// Exits if child pid exited, returns stop signal if pid stopped
 static int
 propagate_exit(int pid, bool immediate)
 try {
@@ -728,7 +728,7 @@ again:
   if (WIFSIGNALED(status)) {
     signal(WTERMSIG(status), SIG_DFL);
     raise(WTERMSIG(status));
-    _exit(-1);
+    (immediate ? _exit : exit)(-1);
   }
   err("unknown child wait status 0x{:x}", status);
 } catch (const std::exception &e) {
@@ -743,9 +743,9 @@ Config::exec(int nsfd, char **argv)
   // cannot move to a new PID namespace, so we have to fork once.  But
   // the forked process will have PID 1 and behave strangely (such as
   // not receiving signals), so needs to fork again to run the actual
-  // jailed program.  Then PID1 has to propagate exit and stop events
-  // to the outer parent, which must propagate it to the process than
-  // ran jai.
+  // jailed program with a normal PID.  Then PID 1 has to propagate
+  // exit and stop events to the outer parent, which must propagate
+  // them to the process than ran jai.
   //
   // Further complicating matters, PID 1 cannot stop itself (since it
   // cannot receive a SIGSTOP from within the PID namespace).  Hence,
@@ -757,8 +757,11 @@ Config::exec(int nsfd, char **argv)
     // This is the last process in the old PID namespace
     close(nsfd);
     stop_me[1].reset();
+    char garbage[64];
+    // discard first write, whose only purpose is to test the parent
+    // didn't die before the child set PR_SET_PDEATSIG.
+    read(*stop_me[0], garbage, 1);
     for (;;) {
-      char garbage[64];
       if (read(*stop_me[0], garbage, sizeof(garbage)) > 0)
         kill(pid, SIGSTOP);
       raise(propagate_exit(pid, false));
@@ -767,9 +770,16 @@ Config::exec(int nsfd, char **argv)
   stop_me[0].reset();
 
   if (auto pid = xfork()) {
-    // This is the "init" process in the new PID namespace
+    // This is the "init" process with PID 1 in the new namespace
     prctl(PR_SET_PDEATHSIG, SIGKILL);
-    if (getppid() == 1) {
+    // If the parent exited, users will be able to unmount overlay
+    // file systems that still exist in other namespaces, which is
+    // annoying and makes it hard to re-create them.  Write one byte
+    // to the pipe to die of a SIGPIPE in case the parent died in the
+    // brief moment before we set PR_SET_PDEATHSIG.  (getppid() won't
+    // tell us if we got reparented to init since we are in a new PID
+    // namespace.)
+    if (write(*stop_me[1], "", 1) != 1) {
       warn("parent killed before PR_SET_PDEATHSIG");
       _exit(1);
     }

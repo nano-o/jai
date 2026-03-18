@@ -1,7 +1,6 @@
 #include <cassert>
 #include <cstring>
 #include <filesystem>
-#include <print>
 
 #include <libmount.h>
 #include <sys/file.h>
