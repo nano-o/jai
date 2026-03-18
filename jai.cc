@@ -931,8 +931,9 @@ do_main(int argc, char **argv)
   // Override inline conf to make CLI idempotent
   (*opts)(
       "-C", "--conf", [&](path p) { opt_C = p; },
-      R"(Use FILE as configuration file (relative to JAI_CONFIG_DIR or ~/.jai)
-default: CMD.conf or default.conf if CMD.conf does not exist)",
+      R"(Use FILE as configuration file.  A file FILE with no '/'
+is relative to $JAI_CONFIG_DIR if set, otherwise to ~/.jai.
+The default is CMD.conf if it exists, otherwise default.conf)",
       "FILE");
   (*opts)("--help", [] { usage(0); });
   (*opts)("--version", version, "Print copyright and version then exit");
