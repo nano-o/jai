@@ -260,6 +260,13 @@ environment before running the command.
   wish to put your private home directories elsewhere in order to use
   casual mode.
 
+`JAI_NAME`
+: Set to the name of the jai instance (specified by `-n` or `--name`)
+  inside the jail.
+
+`JAI_MODE`
+: Set to the mode (strict, bare, or casual) inside a jail.
+
 # FILES
 
 In the following paths, the location `$HOME/.jai` can be changed by

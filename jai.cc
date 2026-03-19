@@ -755,8 +755,6 @@ again:
 void
 Config::exec(int nsfd, char **argv)
 {
-  auto env = make_env();
-
   // This function is a bit annoying because the existing jai process
   // cannot move to a new PID namespace, so we have to fork once.  But
   // the forked process will have PID 1 and behave strangely (such as
@@ -841,6 +839,15 @@ Config::exec(int nsfd, char **argv)
       bashcmd.push_back(nullptr);
       argv = const_cast<char **>(bashcmd.data());
     }
+
+    setenv("JAI_NAME", sandbox_name_.c_str(), 1);
+    setenv("JAI_MODE",
+           mode_ == kStrict ? "strict"
+           : mode_ == kBare ? "bare"
+                            : "casual",
+           1);
+    auto env = make_env();
+
     execvpe(argv0, argv, const_cast<char **>(env.data()));
     perror(argv0);
     _exit(1);
@@ -938,7 +945,8 @@ Config::opt_parser()
       "--command", [this](std::string cmd) { shellcmd_ = std::move(cmd); },
       R"(Bash command line to execute program (default: "$0" "$@"))", "CMD");
   opts(
-      "--storage", [this](std::string_view s) {
+      "--storage",
+      [this](std::string_view s) {
         if (dir_relative_to_home_)
           storagedir_ = homepath_ / s;
         else
