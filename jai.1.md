@@ -148,6 +148,24 @@ To make `jai claude` use the claude jail by default:
     command PATH=$HOME/.local/bin:$PATH "$0" "$@"
     EOF
 
+Suppose you want to make your X11 session available in the claude jail
+to facilitate pasting images into claude.  This significantly reduces
+security, so isn't necessarily a good idea, but you can do it by
+extracting your authentication cookies in your current working
+directory and merging them into your claude jail.
+
+    # Extract cookies outside jail, merge them inside jail
+    xauth extract - $DISPLAY | jai -C claude xauth merge -
+    # Copy a screen region you should be able to paste in claude
+    import png:- | xclip -selection clipboard -t image/png
+
+A safer way to do this is to write your screengrabs directly into the
+sandbox's /tmp directory as in:
+
+    import /run/jai/$USER/tmp/claude/scrn.png
+
+Then in claude, just incorporate the image with `@/tmp/scrn.png`.
+
 To use an existing codex or opencode installation in casual mode (less
 safe) and have it update configuration files in your real home
 directory:
