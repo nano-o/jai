@@ -22,15 +22,16 @@ bool
 Config::parse_config_file(path file, Options *opts)
 {
   bool slash = std::ranges::distance(file.begin(), file.end()) > 1;
+  bool fromcwd = slash && !dir_relative_to_home_;
 
   if (struct stat sb;
       !slash && file.extension() != ".conf" &&
       fstatat(home_jai(), file.c_str(), &sb, 0) && errno == ENOENT &&
-      ~fstatat(home_jai(), cat(file, ".conf").c_str(), &sb, 0) &&
+      !fstatat(home_jai(), cat(file, ".conf").c_str(), &sb, 0) &&
       S_ISREG(sb.st_mode))
     file += ".conf";
 
-  auto ld = (slash ? cwd() : homejaipath_) / file;
+  auto ld = (fromcwd ? cwd() : homejaipath_) / file;
   if (auto [_it, ok] = config_loop_detect_.insert(ld); !ok)
     err<Options::Error>("configuration loop");
   Defer _clear{[this, ld = std::move(ld), drh = dir_relative_to_home_] {
@@ -40,7 +41,7 @@ Config::parse_config_file(path file, Options *opts)
   }};
   dir_relative_to_home_ = true;
 
-  auto r = try_read_file(slash ? AT_FDCWD : home_jai(), file);
+  auto r = try_read_file(fromcwd ? AT_FDCWD : home_jai(), file);
   if (!r) {
     if (r.error().code() == std::errc::no_such_file_or_directory)
       return false;
@@ -599,7 +600,7 @@ Config::unmountall()
         if (name.extension() == ".changes")
           try {
             path workpath = name / ".." / cat(name.stem(), ".work");
-            Fd work = xopenat(home_jai(), workpath.c_str(),
+            Fd work = xopenat(storage(), workpath.c_str(),
                               O_RDONLY | O_DIRECTORY | O_CLOEXEC);
             check_user(*work);
             restore.reset();
@@ -694,13 +695,16 @@ again:
 
 void
 Config::fix_proc()
-{
+try {
   xmnt_propagate(-1, "/", MS_PRIVATE);
   recursive_umount("/proc");
   xmnt_move(*make_mount(*xfsopen("proc", "proc"), MOUNT_ATTR_NOSUID |
                                                       MOUNT_ATTR_NODEV |
                                                       MOUNT_ATTR_NOEXEC),
             -1, "/proc");
+} catch (const std::exception &e) {
+  warn("{}", e.what());
+  _exit(1);
 }
 
 // Implement PID 1 in the new namespace.  Only returns for PID 2.
@@ -715,8 +719,6 @@ try {
   // one byte to the pipe so that a SIGPIPE kills us.
   if (write(*stop_me, "", 1) != 1)
     err("parent killed before PR_SET_PDEATHSIG");
-
-  fix_proc();
 
   // Return in pid 2, continue in pid 1
   auto pid = xfork();
@@ -778,7 +780,6 @@ try {
 void
 Config::pid2(char **argv)
 try {
-  fix_proc();
   if (mode_ == kCasual || mode_ == kBare)
     user_cred_.make_real();
   else
@@ -854,8 +855,9 @@ Config::exec(int nsfd, char **argv)
   }
   stop_me[0].reset();
 
-  pid1(std::move(stop_me[1]));
   xsetns(nsfd, CLONE_NEWNS);
+  fix_proc();
+  pid1(std::move(stop_me[1]));
   pid2(argv);
 }
 

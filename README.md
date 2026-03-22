@@ -22,7 +22,8 @@ things go wrong.
 
 * */tmp* and */var/tmp* are private.
 
-* The rest of the file system is read only.
+* The rest of the file system is read only (though devices are still
+  accessible).
 
 With command-line options or configuration, `jai` supports the
 following:
