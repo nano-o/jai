@@ -50,6 +50,27 @@ xfork(std::uint64_t flags = 0)
   syserr("clone3");
 }
 
+/*
+inline bool
+is_pid_stopped(pid_t pid)
+{
+  auto fullstat = read_file(-1, std::format("/proc/{}/stat", pid));
+  auto pos = fullstat.rfind(')');
+  if (pos == fullstat.npos)
+    err("/proc/PID/stat: wrong format");
+  return (std::string_view(fullstat).substr(pos, 3) == ") T");
+}
+*/
+
+inline sigset_t
+sigsingleton(int sig)
+{
+  sigset_t ret;
+  sigemptyset(&ret);
+  sigaddset(&ret, sig);
+  return ret;
+}
+
 #define xsetns(fd, type)                                                       \
   do {                                                                         \
     if (setns(fd, type)) {                                                     \
@@ -112,7 +133,8 @@ struct Config {
   std::vector<const char *> make_env();
 
   static void fix_proc();
-  void pid1(Fd stop_me);
+  [[noreturn]] static void parent_loop(pid_t jai_init_pid, int stop_requests);
+  void static pid1(Fd stop_me);
   [[noreturn]] void pid2(char **argv);
 
   [[nodiscard]] static Defer asuser(const Credentials *crp);

@@ -9,9 +9,11 @@
 #include <print>
 
 #include <acl/libacl.h>
+#include <poll.h>
 #include <pwd.h>
 #include <ranges>
 #include <sys/prctl.h>
+#include <sys/signalfd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -660,43 +662,58 @@ Config::make_env()
   return ret;
 }
 
-// Exits if child pid exited, returns stop signal if pid stopped
-static int
-propagate_exit(int pid, bool immediate)
-try {
-  assert(pid > 0);
-  int status;
-again:
-  if (auto r = waitpid(-1, &status, WUNTRACED); r == -1) {
-    if (errno == EINTR)
-      goto again;
-    syserr("waitpid");
-  }
-  else if (r != pid)
-    // PID 1 in the jail may need to reap reparented processes
-    goto again;
+static pid_t main_pid = getpid();
 
+// Return stop signal if status indicates a child stopped, exit or
+// kill ourselves if the child terminated on a signal, and return 0
+// otherwise.
+static int
+propagate_termination_status(int status)
+{
   if (WIFSTOPPED(status)) {
     if (int sig = WSTOPSIG(status);
         sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU)
       return sig;
     // Unlikely to reach here, but maybe another process attached to
     // our child with the debugger and it got SIGTRAP or something?
-    goto again;
+    return 0;
   }
 
-  // unmount();
+  void (*do_exit)(int) = getpid() == main_pid ? exit : _exit;
+
   if (WIFEXITED(status))
-    (immediate ? _exit : exit)(WEXITSTATUS(status));
+    do_exit(WEXITSTATUS(status));
   if (WIFSIGNALED(status)) {
-    signal(WTERMSIG(status), SIG_DFL);
-    raise(WTERMSIG(status));
-    (immediate ? _exit : exit)(-1);
+    int sig = WTERMSIG(status);
+    signal(sig, SIG_DFL);
+    auto ss = sigsingleton(WTERMSIG(status));
+    sigprocmask(SIG_UNBLOCK, &ss, nullptr);
+    raise(sig);
+    do_exit(-1);
   }
-  err("unknown child wait status 0x{:x}", status);
-} catch (const std::exception &e) {
-  warn("{}", e.what());
-  immediate ? _exit(1) : exit(1);
+
+  return 0; // Continued?
+}
+
+static int
+wait_propagate(int pid)
+{
+  assert(pid > 0);
+  int status;
+
+  for (;;) {
+    if (auto r = waitpid(-1, &status, WUNTRACED); r == -1) {
+      if (errno != EINTR) {
+        if (getpid() == main_pid)
+          syserr("waitpid");
+        warn("waitpid: {}", strerror(errno));
+        _exit(1);
+      }
+    }
+    else if (r == pid)
+      if (auto sig = propagate_termination_status(status); sig > 0)
+        return sig;
+  }
 }
 
 void
@@ -711,6 +728,108 @@ try {
 } catch (const std::exception &e) {
   warn("{}", e.what());
   _exit(1);
+}
+
+void
+Config::exec(int nsfd, char **argv)
+{
+  // This function is a bit annoying because the existing jai process
+  // cannot move to a new PID namespace, so we have to fork once.  But
+  // the forked process will have PID 1 and behave strangely (such as
+  // not receiving signals from within the PID namespace), so needs to
+  // fork again to run the actual jailed program with a normal PID.
+  // That means PID 1 has to propagate termination events of process 2
+  // to its own parent, which must then propagate them to the process
+  // than ran jai.
+  //
+  // Further complicating matters, PID 1 cannot stop itself (since it
+  // cannot receive a SIGSTOP from within the PID namespace).  Hence,
+  // if the jailed program stops, it uses a pipe to request that the
+  // original jai process stop it (from outside the PID namespace).
+  auto stop_me = xpipe();
+
+  if (auto pid = xfork(CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWNS)) {
+    // This is the last process in the old PID namespace
+    close(nsfd);
+    stop_me[1].reset();
+    // discard first write, whose only purpose is to test the parent
+    // didn't die before the child set PR_SET_PDEATSIG.
+    char c;
+    read(*stop_me[0], &c, 1);
+    parent_loop(pid, *stop_me[0]);
+  }
+  stop_me[0].reset();
+
+  xsetns(nsfd, CLONE_NEWNS);
+  fix_proc();
+  pid1(std::move(stop_me[1]));
+  pid2(argv);
+}
+
+void
+Config::parent_loop(pid_t pid, int stop_requests)
+{
+  auto ss = sigsingleton(SIGCHLD);
+  if (sigprocmask(SIG_BLOCK, &ss, nullptr))
+    syserr("sigprocmask SIG_BLOCK SIGCHLD");
+  Fd sigfd = signalfd(-1, &ss, SFD_CLOEXEC);
+  if (!sigfd)
+    syserr("signalfd");
+
+  if (int n = fcntl(stop_requests, F_GETFL); n == -1)
+    syserr("F_GETFL");
+  else if (fcntl(stop_requests, F_SETFL, n | O_NONBLOCK) == -1)
+    syserr("F_SETFL O_NONBLOCK");
+
+  // Put stop_requests in static to call drain_pipe from signal handler
+  static int rqfd;
+  rqfd = stop_requests;
+  // Flush pipe returning latest signal request or 0 if none
+  constexpr auto drain_pipe = +[]() {
+    int ret = 0, n;
+    unsigned char buf[8];
+    while ((n = read(rqfd, buf, sizeof(buf))) > 0)
+      ret = buf[n - 1];
+    if (n == -1 && errno != EAGAIN && errno != EINTR)
+      syserr("read from stop_requests pipe");
+    return ret;
+  };
+
+  // If we've been resumed, discard any previous stop requests
+  struct sigaction sa{};
+  sa.sa_handler = +[](int) { drain_pipe(); };
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGCONT, &sa, nullptr))
+    syserr("sigcation(SIGCONT)");
+
+  std::array<pollfd, 2> pollfds{pollfd{.fd = stop_requests, .events = POLLIN},
+                                pollfd{.fd = *sigfd, .events = POLLIN}};
+
+  for (int my_next_stop_sig = 0;;) {
+    if (poll(pollfds.data(), pollfds.size(), -1) < 0) {
+      if (errno == EINTR)
+        continue;
+      syserr("poll");
+    }
+
+    for (;;) {
+      int status;
+      if (auto r = waitpid(pid, &status, WNOHANG | WUNTRACED); r == 0)
+        break;
+      else if (r == -1) {
+        if (errno != EINTR)
+          syserr("waitpid");
+      }
+      else if (auto sig = propagate_termination_status(status); sig > 0) {
+        if (my_next_stop_sig > 0)
+          sig = std::exchange(my_next_stop_sig, 0);
+        raise(sig);
+      }
+    }
+
+    if ((my_next_stop_sig = drain_pipe()) > 0)
+      kill(pid, SIGSTOP);
+  }
 }
 
 // Implement PID 1 in the new namespace.  Only returns for PID 2.
@@ -733,20 +852,6 @@ try {
 
   prctl(PR_SET_NAME, "jai-init");
 
-  // We have to two distinct cases.  1) If our child process starts a
-  // new process group (e.g., an interactive shell), then when the
-  // child stops stops (e.g., the user runs "suspend"), we also need
-  // to stop.  When we are resumed, we need to resume the child and
-  // make it's process group the foreground process group (assuming we
-  // have a controlling terminal).
-  //
-  // 2) if the child process does not start a new process group, then
-  // we just let the outer shell handle any job control duties.  It's
-  // a bit strange that in the this case we are a member of process
-  // group that doesn't exist in our own PID namespace, but getpgid(0)
-  // just returns 0, which is good enough to differentiate it from an
-  // in-namespace pgid.
-
   // Note: getpgid is technicalaly not signal safe, but disassembling
   // glibc shows it doesn't do anything problematic other than maybe
   // change errno.  Conceivably there could be weirdness performing
@@ -760,6 +865,7 @@ try {
   tty = open("/dev/tty", O_RDWR | O_CLOEXEC);
 
   struct sigaction sa{};
+  sigemptyset(&sa.sa_mask);
   sigaddset(&sa.sa_mask, SIGTTOU);
   sa.sa_handler = +[](int sig) {
     int saved_errno = errno;
@@ -774,9 +880,8 @@ try {
     syserr("sigaction(SIGCONT)");
 
   for (;;) {
-    propagate_exit(pid, true);
-    if (auto pg = getpgid(main_child_pid); pg != my_pgid)
-      write(*stop_me, "", 1);
+    unsigned char sig = wait_propagate(pid);
+    write(*stop_me, &sig, 1);
   }
 } catch (const std::exception &e) {
   warn("{}", e.what());
@@ -825,46 +930,6 @@ try {
 } catch (const std::exception &e) {
   warn("{}", e.what());
   _exit(1);
-}
-
-void
-Config::exec(int nsfd, char **argv)
-{
-  // This function is a bit annoying because the existing jai process
-  // cannot move to a new PID namespace, so we have to fork once.  But
-  // the forked process will have PID 1 and behave strangely (such as
-  // not receiving signals from within the PID namespace), so needs to
-  // fork again to run the actual jailed program with a normal PID.
-  // That means PID 1 has to propagate termination events of process 2
-  // to its own parent, which must then propagate them to the process
-  // than ran jai.
-  //
-  // Further complicating matters, PID 1 cannot stop itself (since it
-  // cannot receive a SIGSTOP from within the PID namespace).  Hence,
-  // if the jailed program stops, it uses a pipe to request that the
-  // original jai process stop it (from outside the PID namespace).
-  auto stop_me = xpipe();
-
-  if (auto pid = xfork(CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWNS)) {
-    // This is the last process in the old PID namespace
-    close(nsfd);
-    stop_me[1].reset();
-    char garbage[64];
-    // discard first write, whose only purpose is to test the parent
-    // didn't die before the child set PR_SET_PDEATSIG.
-    read(*stop_me[0], garbage, 1);
-    for (;;) {
-      if (read(*stop_me[0], garbage, sizeof(garbage)) > 0)
-        kill(pid, SIGSTOP);
-      raise(propagate_exit(pid, false));
-    }
-  }
-  stop_me[0].reset();
-
-  xsetns(nsfd, CLONE_NEWNS);
-  fix_proc();
-  pid1(std::move(stop_me[1]));
-  pid2(argv);
 }
 
 std::unique_ptr<Options>
