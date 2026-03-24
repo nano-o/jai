@@ -109,7 +109,6 @@ Config::init_credentials()
   // HOME may incorrectly be root's when using su/sudo
   if (realuid == 0 && pw->pw_uid != 0)
     setenv("HOME", pw->pw_dir, 1);
-  ;
 
   if (PwEnt u = PwEnt::get_nam(kUntrustedUser)) {
     if (u->pw_uid && !strcmp(u->pw_gecos, kUntrustedGecos) &&
@@ -1091,12 +1090,13 @@ version()
 {
   std::println(R"({}
 {}
+Untrusted uid for strict mode: {}
 
 Copyright (C) 2026 David Mazieres
 This program comes with NO WARRANTY, to the extent permitted by law.
 You may redistribute it under the terms of the GNU General Public License
 version 3 or later; see the file named COPYING for details.)",
-               PACKAGE_STRING, PACKAGE_URL);
+               PACKAGE_STRING, PACKAGE_URL, kUntrustedUser);
   exit(0);
 }
 
