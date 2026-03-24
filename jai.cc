@@ -515,9 +515,19 @@ Config::make_mnt_ns()
   auto blockdir = [this, &oldns, &newns, &sbcred](const path &p) {
     assert(p.is_absolute());
     auto restore_root = asuser(sbcred);
-    Fd target = xopenat(AT_FDCWD, p, O_DIRECTORY | O_RDONLY);
-    check_user(*target, p, true);
+    Fd target = openat(AT_FDCWD, p.c_str(), O_DIRECTORY | O_RDONLY);
+    if (!target)
+      return;
     restore_root.reset();
+
+    struct stat sbold, sbnew = xfstat(*target);;
+    xsetns(*oldns, CLONE_NEWNS);
+    int staterr = stat(p.c_str(), &sbold);
+    xsetns(*newns, CLONE_NEWNS);
+    if (staterr || sbold.st_ino != sbnew.st_ino || sbold.st_dev != sbnew.st_dev)
+      return;
+
+    check_user(*target, p, true);
     Fd empty = xopenat(-1, kRunRoot, O_RDONLY);
     if (!is_dir_empty(*empty))
       err("{} should be empty in jail", kRunRoot);
@@ -1130,9 +1140,9 @@ The default is CMD.conf if it exists, otherwise default.conf)",
 
   ensure_file(conf.home_jai(opt_init), ".defaults", jai_defaults, 0600);
   ensure_file(conf.home_jai(), "default.conf", default_conf, 0600);
-  ensure_file(conf.storage(), "default.jail", default_jail, 0600);
 
   if (opt_init) {
+    ensure_file(conf.storage(), "default.jail", default_jail, 0600);
     std::println("You can edit the configuration defaults in {}/.defaults",
                  conf.homejaipath_.string());
     exit(0);
@@ -1163,9 +1173,12 @@ The default is CMD.conf if it exists, otherwise default.conf)",
   bool createwarn = false;
   if (conf.sandbox_name_.empty())
     conf.sandbox_name_ = "default";
-  Fd dotjail =
-      ensure_file(conf.storage(), cat(conf.sandbox_name_, ".jail"),
-                  std::format("mode {}\n", conf.mode_), 0600, &createwarn);
+  Fd dotjail = ensure_file(conf.storage(), cat(conf.sandbox_name_, ".jail"),
+                           conf.sandbox_name_ == "default"
+                               ? default_jail
+                               : std::format("mode {}\n", conf.mode_),
+                           0600, &createwarn);
+
   if (createwarn)
     warn("created {}", fdpath(*dotjail));
   conf.parse_config_fd(*dotjail, conf.opt_parser(true).get());
