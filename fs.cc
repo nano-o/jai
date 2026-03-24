@@ -45,7 +45,7 @@ fdpath(int fd, bool must)
     }
     res = std::format("fd {} [can't determine path]", fd, ec.message());
   }
-  else if (must && !res.is_absolute() || !is_fd_at_path(fd, -1, res))
+  else if (must && (!res.is_absolute() || !is_fd_at_path(fd, -1, res)))
     err("{} not valid complete path for fd {}", res.string(), fd);
   return res;
 }
