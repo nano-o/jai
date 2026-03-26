@@ -14,6 +14,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+extern "C" char **environ;
+
 inline const char *
 env_or_empty(std::string_view var)
 {
@@ -115,9 +117,10 @@ struct Config {
   Fd make_mnt_ns();
   void exec(int nsfd, char **argv);
   void unmount();
-  void unmountall();
+  bool unmountall();
   std::unique_ptr<Options> opt_parser(bool dotjail = false);
 
+  int complete(Options::Completions c);
   void parse_config_fd(int fd, Options *opts = nullptr);
   bool parse_config_file(path file, Options *opts = nullptr);
   std::vector<const char *> make_env();

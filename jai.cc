@@ -602,7 +602,7 @@ clean_root_owned_dir(int dfd, path file)
   }
 }
 
-void
+bool
 Config::unmountall()
 {
   Fd lock;
@@ -643,9 +643,9 @@ Config::unmountall()
   unlinkat(run_jai_user(), ".lock", 0);
   lock.reset();
   unlinkat(run_jai(), user_.c_str(), AT_REMOVEDIR);
-}
 
-extern "C" char **environ;
+  return unmount_ok;
+}
 
 std::vector<const char *>
 Config::make_env()
@@ -1100,7 +1100,7 @@ version 3 or later; see the file named COPYING for details.)",
   exit(0);
 }
 
-void
+int
 do_main(int argc, char **argv)
 {
   Config conf;
@@ -1137,6 +1137,9 @@ The default is CMD.conf if it exists, otherwise default.conf)",
       "Show default contents of $JAI_CONFIG_DIR/.defaults");
   option_help = opts->help();
 
+  if (argc > 2 && !strcmp(argv[1], "--complete"))
+    return conf.complete(opts->complete_args(2, argc, argv));
+
   std::vector<char *> cmd;
   try {
     cmd.assign_range(opts->parse_argv(argc, argv));
@@ -1160,7 +1163,7 @@ The default is CMD.conf if it exists, otherwise default.conf)",
     std::println(
         "Run {} --print-defaults to see the original contents of that file.",
         prog.filename().string());
-    exit(0);
+    return 0;
   }
 
   if (opt_u) {
@@ -1169,8 +1172,7 @@ The default is CMD.conf if it exists, otherwise default.conf)",
       usage(2);
     }
     restore.reset();
-    conf.unmountall();
-    return;
+    return conf.unmountall() ? 0 : 1;
   }
 
   if (!opt_C.empty()) {
@@ -1208,6 +1210,7 @@ The default is CMD.conf if it exists, otherwise default.conf)",
   auto fd = conf.make_mnt_ns();
   cmd.push_back(nullptr);
   conf.exec(*fd, cmd.data());
+  return 0;
 }
 
 int
@@ -1227,10 +1230,9 @@ main(int argc, char **argv)
 #endif
 
   try {
-    do_main(argc, argv);
+    exit(do_main(argc, argv));
   } catch (const ToCatch &e) {
     warn("{}", e.what());
-    return 1;
   }
-  return 0;
+  return 1;
 }

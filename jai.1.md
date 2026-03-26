@@ -405,6 +405,16 @@ uses `\` to escape the next character.
 `--version`
 : Prints the version number and copyright and exit.
 
+`--complete`
+: This option is only valid as the first option on the command line.
+  It tells jai not to do anything, but it prints a list of completions
+  to assist shells in doing command completion.  For example: `jai
+  --complete -m "c"` prints `casual`.  If the commands line is
+  complete, then it will output the special string `_command_offset
+  `*N*, which indicates that argument *N* is the start of a new
+  command that should be completed according to the rules for that
+  command.
+
 # ENVIRONMENT
 
 The following environment variables affect jai's operation:

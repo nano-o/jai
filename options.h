@@ -88,14 +88,15 @@
 
 #include "err.h"
 
+#include <cassert>
 #include <charconv>
 #include <concepts>
 #include <cstring>
-#include <format>
 #include <functional>
 #include <initializer_list>
 #include <map>
 #include <memory>
+#include <print>
 #include <span>
 #include <utility>
 #include <vector>
@@ -188,15 +189,18 @@ struct Option : std::string_view {
 
 struct Options {
   struct Completions {
-    static constexpr int kNoCompletions = -1;
-    static constexpr int kRawCompletions = -3;
-    static constexpr int kArgCompletions = -4;
+    enum Disposition {
+      kNoCompletions = -1,
+      kRawCompletions = -2,
+      kArgCompletions = -3,
+    };
 
     // If kind >= 0, then argv[kind] is the first non-option argument,
-    // meaning the first argument that is not a valid syntactic
-    // argument (at least 2 characters, first character '-', total
-    // length 2 if and only if the second argument is not '-').  If
-    // there is a "--" argument, then kind is the position after that.
+    // meaning the first argument that is not a valid syntactic option
+    // (at least 2 characters, first character '-', total length 2 if
+    // and only if the second argument is not '-') or the argument to
+    // such an option.  If there is a "--" argument, then kind is the
+    // position after that.
     //
     // If kind is kNoCompletions, then something went wrong (an
     // invalid argument somewhere) and nothing can be completed.
@@ -206,21 +210,22 @@ struct Options {
     // E.g., if completing "-", it would include all options (both
     // short and long).
     //
-    // If kind is kArgCompletions, then vals must contain exactly 3
-    // elements as follows:
+    // If kind is kArgCompletions, then we are completing the argument
+    // to a fully determined option,and vals has 3 elements as
+    // follows:
     //
-    //    - arg[0] is the argument to be completed (e.g., "-d" or "--dir")
+    //    - opt() is the option being completed (e.g., "-d" or "--dir")
     //
-    //    - arg[1] is the current prefix of the argument.  E.g., if
-    //      the argument being completed is "--dir=/usr/lo" or just
-    //      "/usr/lo" following "--dir", then it would be "/usr/lo".
+    //    - arg() is the current argument stem.  E.g., if the argument
+    //      being completed is "--dir=/usr/lo" or just "/usr/lo"
+    //      following "--dir", then it would be "/usr/lo".
     //
-    //    - arg[2] is the prefix to prepend to completions generated.
-    //      In the case that the value is a separate argv element
-    //      (e.g., completing {"--dir", "/usr/lo"}) arg[2] will be
-    //      empty.  In the case that the option and argument are in
-    //      one argv element such as "--dir=/usr/lo" or "-mcasu", then
-    //      it argv[2] would be "--dir=" or "-m".
+    //    - prepend() is what to prepend to completions generated.  In
+    //      the case that the value is a separate argv element (e.g.,
+    //      completing {"--dir", "/usr/lo"}) prepend() will be empty.
+    //      In the case that the option and argument are in one argv
+    //      element such as "--dir=/usr/lo" or "-mcasu", then
+    //      prepend() would be "--dir=" or "-m".
     int kind = kNoCompletions;
 
     std::vector<std::string> vals;
@@ -230,6 +235,15 @@ struct Options {
     Completions(int k, std::vector<std::string> v) noexcept
       : kind(k), vals(std::move(v))
     {}
+
+    std::string_view index_vals(size_t n) const
+    {
+      assert(kind == kArgCompletions && vals.size() == 3 && n < 3);
+      return vals[n];
+    }
+    auto opt() const { return index_vals(0); }
+    auto arg() const { return index_vals(1); }
+    auto prepend() const { return index_vals(2); }
   };
 
   using enum Action::HasArg;

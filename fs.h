@@ -229,21 +229,36 @@ xdup(int fd, int minfd = 3)
   return ret;
 }
 
-inline RaiiHelper<closedir>
-xopendir(int dfd, path file = {}, FollowLinks follow = kNoFollow)
+inline std::expected<RaiiHelper<closedir>, std::system_error>
+try_opendir(int dfd, path file = {}, FollowLinks follow = kNoFollow)
 {
-  Fd fd;
   if (file.empty())
-    fd = xdup(dfd);
-  else
-    fd = xopenat(dfd, file,
-                 O_RDONLY | O_DIRECTORY |
-                     (follow == kNoFollow ? O_NOFOLLOW : 0));
+    // re-open in case dfd is O_PATH and to avoid messing with the
+    // offset of dfd if we read the directory multiple times
+    file = ".";
+  Fd fd =
+      openat(dfd, file.c_str(),
+             O_RDONLY | O_DIRECTORY | (follow == kNoFollow ? O_NOFOLLOW : 0));
+  if (!fd)
+    return std::unexpected{
+        std::system_error(errno, std::system_category(), fdpath(dfd, file))};
+
   if (auto d = fdopendir(*fd)) {
     fd.release();
     return d;
   }
-  syserr("fdopendir({})", fdpath(dfd, file));
+  return std::unexpected{
+      std::system_error(errno, std::system_category(),
+                        std::format("{}: fdopendir", fdpath(*fd)))};
+}
+
+inline RaiiHelper<closedir>
+xopendir(int dfd, path file = {}, FollowLinks follow = kNoFollow)
+{
+  if (auto r = try_opendir(dfd, file, follow))
+    return std::move(*r);
+  else
+    throw r.error();
 }
 
 // dirent::d_name is an array, so won't convert properly to types that
