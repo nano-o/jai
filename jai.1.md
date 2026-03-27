@@ -16,13 +16,13 @@ jai - Jail an AI agent
 
 # DESCRIPTION
 
-`jai` is a super-lightweight sandbox for AI agents requiring almost no
+jai is a super-lightweight sandbox for AI agents requiring almost no
 configuration.  By default it provides casual security, so is not a
 substitute for using a proper container to confine agents.  However,
 it is a great alternative to using no protection at all when you are
 thinking of giving an agent full control of your account and all its
-files.  Compared to the latter, `jai` can reduce the blast radius
-should things go wrong.
+files.  Compared to the latter, jai can reduce the blast radius should
+things go wrong.
 
 By default, if you run "`jai` *cmd* [*arg*]...", it will execute *cmd*
 with the specified arguments in a lightweight jail that has full
@@ -40,30 +40,43 @@ jai prevents *cmd* from clobbering all your files, but doesn't provide
 much confidentiality.
 
 If you run `jai -mstrict` *cmd* [*arg*]...", then *cmd* will be run
-with an empty home directory as an unprivileged user id, but with the
-current working directory mapped to its place and fully exposed.
-Though the rest of the system outside the user's home directory is
-available read-only, because *cmd* is running with a different user
-ID, it will not be able to read sensitive files accessible to the
-user.
+with an empty home directory, using the credentials of the
+unprivileged user `jai` on your system, but with the current working
+directory mapped to its place and fully exposed.  Though the rest of
+the system outside your home directory is available read-only, because
+*cmd* is running with user `jai`'s credentials rather than yours, it
+will not be able to read sensitive files that require your user ID or
+group IDs (assuming you don't add `jai` to any supplemental groups,
+which would be a strange thing to do).
 
 Strict mode does not let you grant access to NFS file systems.  If
 your home directory is on NFS, you can instead use bare mode with `jai
 -mbare`.  Bare mode hides your entire home directory like strict mode,
-but it still runs as your user ID.  (All modes use a private PID
-namespace, however, so jailed software cannot kill or ptrace processes
-outside of the jail.  However, bare mode allows jailed software to
-read any sensitive files you have access to outside of your home
-directory.)
+but it runs jailed software with your user credentials, and hence
+allows jailed software to use your credentials to read any sensitive
+files you have access to outside your home directory.
+
+Note that all modes use a private PID namespace, so jailed software
+cannot kill or ptrace processes outside of the jail.  Moreover, all
+modes have a private `/run/user/$UID/` directory
+(a.k.a. `$XDG_RUNTIME_DIR`), since many sensitive daemons have sockets
+in that directory.  Jai will let you expose that directory or
+subdirectories of with the `-d` option, discussed below.  E.g., `jai
+-d $XDG_RUNTIME_DIR/emacs` makes `emacsclient` in the jail open an
+unjailed editor--**but** it also allows jailed software to request
+evaluation of arbitrary elisp outside of the jail, eliminating any
+security boundary (though still potentially guarding against
+accidental file erasure).
 
 By default, jai will store private home directories under
 `$HOME/.jai`.  However, it needs the ability to set extended
-attributes which is not possible if your home directory is on NFS.
-You can use the option `--storage=/some/local/directory` to store
-private home directories in a different location, as long as you own
-the storage directory.  Alternatively, you can set the
-`JAI_CONFIG_DIR` environment variable to move your entire
-configuration directory from `$HOME/.jai` to a local disk.
+attributes on casual jails, which is not possible if your home
+directory is on NFS.  You can use the option
+`--storage=/some/local/directory` to store private home directories in
+a different location, as long as you own the storage directory.
+Alternatively, you can set the `JAI_CONFIG_DIR` environment variable
+to move your entire configuration directory from `$HOME/.jai` to a
+local disk.
 
 If you want to grant access to directories other than the current
 working directory, you can specify addition directories with the `-d`

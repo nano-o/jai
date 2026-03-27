@@ -1,5 +1,7 @@
-AC_INIT([jai], [0.1], [https://www.scs.stanford.edu/~dm/addr/],,
-        https://github.com/stanford-scs/jai)
+AC_INIT([jai], [0.1],
+   [https://github.com/stanford-scs/jai/issues
+   or https://www.scs.stanford.edu/~dm/addr/],,
+   [https://jai.scs.stanford.edu/])
 AM_INIT_AUTOMAKE([foreign -Wall -Werror serial-tests])
 AC_CONFIG_HEADERS([config.h])
 

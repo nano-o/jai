@@ -1123,7 +1123,7 @@ version()
 {
   std::println(R"({}
 {}
-Untrusted uid for strict mode: {}
+Untrusted user for strict mode: {}
 
 Copyright (C) 2026 David Mazieres
 This program comes with NO WARRANTY, to the extent permitted by law.
