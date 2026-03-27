@@ -70,14 +70,15 @@ complete_config(int cfd, CompSet &c, std::string ext)
 static void
 complete_env(CompSet &c, bool eq)
 {
-  std::string_view arg;
+  std::string_view arg = c.arg();
   for (char **e = environ; *e; ++e) {
     std::string_view var = *e;
     if (auto pos = var.find('='); pos == var.npos)
       continue;
     else
       var = var.substr(0, eq ? pos + 1 : pos);
-    c.output("{}", var);
+    if (var.starts_with(arg))
+      c.output("{}", var);
   }
 }
 
