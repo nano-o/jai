@@ -703,10 +703,10 @@ Config::make_env()
     setenv_.try_emplace(std::string(sv), *e);
   }
 
-  std::vector<const char *> ret(std::from_range,
-                                setenv_ | std::views::transform([](auto &kv) {
-                                  return kv.second.c_str();
-                                }));
+  auto env_range = setenv_ | std::views::transform([](auto &kv) {
+                     return kv.second.c_str();
+                   });
+  std::vector<const char *> ret(env_range.begin(), env_range.end());
   ret.push_back(nullptr);
   return ret;
 }
@@ -1205,7 +1205,8 @@ The default is CMD.conf if it exists, otherwise default.conf)",
 
   std::vector<char *> cmd;
   try {
-    cmd.assign_range(opts->parse_argv(argc, argv));
+    auto args = opts->parse_argv(argc, argv);
+    cmd.assign(args.begin(), args.end());
   } catch (Options::Error &e) {
     warn("{}", e.what());
     usage(2);
